@@ -1,0 +1,38 @@
+services:
+  defect-detector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: defect-detector
+    ports:
+      - "${SERVICE_PORT:-8400}:${SERVICE_PORT:-8400}"
+    environment:
+      # Service configuration
+      SERVICE_PORT: ${SERVICE_PORT:-8400}
+      SERVICE_HOST: "0.0.0.0"
+      SERVICE_NAME: "DefectDetector"
+      DEBUG: ${DEBUG:-false}
+      
+      # Model configuration
+      MODEL_PATH: "models/defect_seg.pt"
+      CONFIDENCE_THRESHOLD: ${CONFIDENCE_THRESHOLD:-0.3}
+      INFERENCE_DEVICE: ${INFERENCE_DEVICE:-cpu}
+      IMAGE_SIZE: ${IMAGE_SIZE:-640}
+    volumes:
+      # Optional: mount models directory for easy model updates without rebuild
+      # - ./models:/app/models:ro
+      []
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8400/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - fruitstack
+
+networks:
+  fruitstack:
+    driver: bridge
+
