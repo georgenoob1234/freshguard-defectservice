@@ -1,6 +1,6 @@
 """
-Utility functions for DefectDetector service.
-Handles image preprocessing and BGR conversion.
+Utility functions for ClassificationService.
+Handles image preprocessing and RGB conversion.
 """
 
 import io
@@ -9,18 +9,18 @@ from PIL import Image
 from typing import Tuple
 
 
-def load_image_as_bgr(image_bytes: bytes) -> np.ndarray:
+def load_image_as_rgb(image_bytes: bytes) -> np.ndarray:
     """
-    Load image from bytes and convert to BGR numpy array.
+    Load image from bytes and convert to RGB numpy array.
     
     This is the MANDATORY preprocessing step before inference.
-    Flow: bytes → PIL.Image → RGB numpy → BGR numpy
+    Flow: bytes → PIL.Image → RGB numpy
     
     Args:
         image_bytes: Raw image bytes (JPEG or PNG)
         
     Returns:
-        BGR numpy array ready for inference
+        RGB numpy array ready for classification inference
         
     Raises:
         ValueError: If image cannot be decoded
@@ -36,26 +36,43 @@ def load_image_as_bgr(image_bytes: bytes) -> np.ndarray:
         # Convert to numpy array (RGB order)
         rgb_array = np.array(pil_image)
         
-        # Convert RGB to BGR (mandatory for YOLO/OpenCV inference)
-        bgr_array = rgb_array[:, :, ::-1].copy()
-        
-        return bgr_array
+        return rgb_array
         
     except Exception as e:
         raise ValueError(f"Failed to decode image: {str(e)}")
 
 
-def get_image_dimensions(bgr_array: np.ndarray) -> Tuple[int, int]:
+def load_image_as_bgr(image_bytes: bytes) -> np.ndarray:
     """
-    Get image dimensions from BGR array.
+    Load image from bytes and convert to BGR numpy array.
+    Kept for backwards compatibility.
     
     Args:
-        bgr_array: BGR numpy array
+        image_bytes: Raw image bytes (JPEG or PNG)
+        
+    Returns:
+        BGR numpy array
+        
+    Raises:
+        ValueError: If image cannot be decoded
+    """
+    rgb_array = load_image_as_rgb(image_bytes)
+    # Convert RGB to BGR
+    bgr_array = rgb_array[:, :, ::-1].copy()
+    return bgr_array
+
+
+def get_image_dimensions(array: np.ndarray) -> Tuple[int, int]:
+    """
+    Get image dimensions from numpy array.
+    
+    Args:
+        array: RGB or BGR numpy array
         
     Returns:
         Tuple of (height, width)
     """
-    return bgr_array.shape[:2]
+    return array.shape[:2]
 
 
 def validate_image_bytes(image_bytes: bytes) -> bool:
@@ -77,4 +94,3 @@ def validate_image_bytes(image_bytes: bytes) -> bool:
         return True
     except Exception:
         return False
-

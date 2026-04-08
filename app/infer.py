@@ -1,20 +1,21 @@
 """
-Inference module for DefectDetector service.
-Handles YOLO-Seg model loading and defect detection.
+Inference module for ClassificationService.
+Handles YOLO classification model loading and defect classification.
 """
 
+import time
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from pathlib import Path
 
 from app.config import settings
 from app.logging_config import logger
-from app.models import DefectResult, SegmentationData
+from app.models import DefectResult
 
 
-class DefectInferenceEngine:
+class ClassificationInferenceEngine:
     """
-    YOLO-Seg based defect detection engine.
+    YOLO Classification based defect detection engine.
     Loads model once at startup and provides inference method.
     """
     
@@ -26,7 +27,7 @@ class DefectInferenceEngine:
     
     def _load_model(self) -> None:
         """
-        Load the YOLO segmentation model at startup.
+        Load the YOLO classification model at startup.
         Model is loaded once and reused for all requests.
         """
         try:
@@ -42,7 +43,7 @@ class DefectInferenceEngine:
                 self.is_loaded = False
                 return
             
-            logger.info(f"Loading YOLO-Seg model from {model_path}")
+            logger.info(f"Loading YOLO classification model from {model_path}")
             self.model = YOLO(str(model_path))
             
             # Set device
@@ -51,6 +52,7 @@ class DefectInferenceEngine:
             
             self.is_loaded = True
             logger.info(f"Model loaded successfully on {settings.INFERENCE_DEVICE}")
+            logger.info(f"Model classes: {self.model.names}")
             
         except ImportError:
             logger.error("ultralytics package not installed")
@@ -59,160 +61,129 @@ class DefectInferenceEngine:
             logger.error(f"Failed to load model: {str(e)}")
             self.is_loaded = False
     
-    def detect(self, bgr_image: np.ndarray) -> List[DefectResult]:
+    def classify(
+        self,
+        image: np.ndarray,
+        image_id: str = "",
+        fruit_id: str = ""
+    ) -> List[DefectResult]:
         """
-        Run defect detection on a BGR image.
+        Run defect classification on an image.
         
         Args:
-            bgr_image: BGR numpy array (mandatory format)
+            image: RGB uint8 numpy array (HxWx3) from PIL; converted to BGR for YOLO.
+            image_id: For logging purposes
+            fruit_id: For logging purposes
             
         Returns:
-            List of DefectResult objects (empty if no defects)
+            List of DefectResult objects (empty if no defect, one item if defect detected)
         """
         if not self.is_loaded or self.model is None:
             logger.warning("Model not loaded, returning empty defects")
             return []
         
         try:
-            # Run inference with YOLO-Seg
-            results = self.model(
-                bgr_image,
+            # PIL gives RGB. Ultralytics preprocess treats numpy HxWx3 as BGR and
+            # applies BGR→RGB before the model; pass BGR so the net sees correct RGB.
+            yolo_input = (
+                image[:, :, ::-1].copy()
+                if image.ndim == 3 and image.shape[2] == 3
+                else image
+            )
+
+            start_time = time.time()
+            results = self.model.predict(
+                source=yolo_input,
                 imgsz=settings.IMAGE_SIZE,
-                conf=settings.CONFIDENCE_THRESHOLD,
                 verbose=False
             )
             
-            defects = []
+            inference_time_ms = (time.time() - start_time) * 1000
             
-            for result in results:
-                # Check if segmentation masks are available
-                if result.masks is None:
-                    continue
-                
-                # Process each detection
-                masks = result.masks
-                boxes = result.boxes
-                
-                if masks is None or boxes is None:
-                    continue
-                
-                for i, (mask, box) in enumerate(zip(masks.data, boxes)):
-                    confidence = float(box.conf[0])
-                    
-                    # Skip low confidence detections
-                    if confidence < settings.CONFIDENCE_THRESHOLD:
-                        continue
-                    
-                    # Extract polygon from mask
-                    polygon = self._mask_to_polygon(
-                        mask.cpu().numpy(),
-                        bgr_image.shape[:2]
-                    )
-                    
-                    segmentation = None
-                    if polygon is not None and len(polygon) >= 3:
-                        segmentation = SegmentationData(polygon=polygon)
-                    
-                    defect = DefectResult(
-                        type="defect",
-                        confidence=round(confidence, 4),
-                        segmentation=segmentation
-                    )
-                    defects.append(defect)
-                    
-                    # Only return first defect (binary: defect/no defect)
-                    break
-                
-                if defects:
-                    break
+            # Extract classification results
+            if not results or len(results) == 0:
+                logger.warning(f"No results from model for fruit_id={fruit_id}")
+                return []
             
-            return defects
+            result = results[0]
             
-        except Exception as e:
-            logger.error(f"Inference error: {str(e)}")
-            return []
-    
-    def _mask_to_polygon(
-        self,
-        mask: np.ndarray,
-        original_size: Tuple[int, int]
-    ) -> Optional[List[List[float]]]:
-        """
-        Convert a binary mask to polygon coordinates.
-        
-        Args:
-            mask: Binary mask from YOLO output
-            original_size: (height, width) of original image
+            # Get top1 prediction
+            probs = result.probs
+            if probs is None:
+                logger.warning(f"No classification probs for fruit_id={fruit_id}")
+                return []
             
-        Returns:
-            List of [x, y] coordinate pairs in crop pixel space
-        """
-        try:
-            import cv2
+            top1_idx = int(probs.top1)
+            top1_conf = float(probs.top1conf)
             
-            # Resize mask to original image size if needed
-            if mask.shape[:2] != original_size:
-                mask = cv2.resize(
-                    mask.astype(np.uint8),
-                    (original_size[1], original_size[0]),
-                    interpolation=cv2.INTER_LINEAR
-                )
+            # Get class name - try both result.names and model.names
+            if hasattr(result, 'names') and result.names:
+                class_name = result.names[top1_idx]
+            elif hasattr(self.model, 'names') and self.model.names:
+                class_name = self.model.names[top1_idx]
+            else:
+                class_name = str(top1_idx)
             
-            # Ensure binary mask
-            mask = (mask > 0.5).astype(np.uint8) * 255
-            
-            # Find contours
-            contours, _ = cv2.findContours(
-                mask,
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE
+            # Log inference results
+            logger.info(
+                f"Classification: image_id={image_id}, fruit_id={fruit_id}, "
+                f"predicted_class={class_name}, confidence={top1_conf:.4f}, "
+                f"inference_time={inference_time_ms:.1f}ms"
             )
             
-            if not contours:
-                return None
+            # Check if it's a defect
+            is_defect = (
+                class_name.lower() == settings.DEFECT_CLASS_NAME.lower() and
+                top1_conf >= settings.DEFECT_MIN_CONF
+            )
             
-            # Get largest contour
-            largest_contour = max(contours, key=cv2.contourArea)
-            
-            # Simplify polygon
-            epsilon = 0.01 * cv2.arcLength(largest_contour, True)
-            approx = cv2.approxPolyDP(largest_contour, epsilon, True)
-            
-            # Convert to list of [x, y] pairs
-            polygon = [[float(pt[0][0]), float(pt[0][1])] for pt in approx]
-            
-            return polygon if len(polygon) >= 3 else None
+            if is_defect:
+                # Return defect with segmentation=null as per spec
+                defect = DefectResult(
+                    type="defect",
+                    confidence=round(top1_conf, 4),
+                    segmentation=None
+                )
+                return [defect]
+            else:
+                # No defect - return empty list
+                return []
             
         except Exception as e:
-            logger.error(f"Mask to polygon conversion error: {str(e)}")
-            return None
+            logger.error(f"Inference error for fruit_id={fruit_id}: {str(e)}")
+            raise
 
 
 # Global inference engine instance (loaded once at module import)
-inference_engine: Optional[DefectInferenceEngine] = None
+inference_engine: Optional[ClassificationInferenceEngine] = None
 
 
-def get_inference_engine() -> DefectInferenceEngine:
+def get_inference_engine() -> ClassificationInferenceEngine:
     """
     Get or create the global inference engine.
     Ensures model is loaded only once.
     """
     global inference_engine
     if inference_engine is None:
-        inference_engine = DefectInferenceEngine()
+        inference_engine = ClassificationInferenceEngine()
     return inference_engine
 
 
-def run_inference(bgr_image: np.ndarray) -> List[DefectResult]:
+def run_inference(
+    image: np.ndarray,
+    image_id: str = "",
+    fruit_id: str = ""
+) -> List[DefectResult]:
     """
-    Convenience function to run defect detection.
+    Convenience function to run defect classification.
     
     Args:
-        bgr_image: BGR numpy array
+        image: RGB numpy array
+        image_id: For logging
+        fruit_id: For logging
         
     Returns:
         List of DefectResult objects
     """
     engine = get_inference_engine()
-    return engine.detect(bgr_image)
-
+    return engine.classify(image, image_id, fruit_id)

@@ -1,10 +1,10 @@
 """
-Main FastAPI application for DefectDetector service.
+Main FastAPI application for ClassificationService.
 
 This is a passive microservice that:
 - Receives cropped fruit images from Brain
-- Detects defects using YOLO-Seg model
-- Returns defect results with segmentation polygons
+- Classifies defects using YOLO classification model
+- Returns defect results compatible with old DefectDetector schema
 
 All requests originate from Brain - this service never initiates requests.
 """
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     engine = get_inference_engine()
     
     if engine.is_loaded:
-        logger.info("Model loaded and ready for inference")
+        logger.info("Classification model loaded and ready for inference")
     else:
         logger.warning("Model not loaded - service will return empty defects")
     
@@ -45,10 +45,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.SERVICE_NAME,
     description=(
-        "Defect detection microservice for fruit analysis system. "
-        "Receives cropped fruit images and returns defect segmentation results."
+        "Defect classification microservice for fruit analysis system. "
+        "Receives cropped fruit images and returns defect classification results. "
+        "Compatible with Brain's DefectDetector API contract."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -70,7 +71,7 @@ async def root():
     """Root endpoint with service information."""
     return {
         "service": settings.SERVICE_NAME,
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": "running",
         "endpoints": {
             "detect_defects": "POST /detect-defects",
@@ -88,4 +89,3 @@ if __name__ == "__main__":
         port=settings.SERVICE_PORT,
         reload=settings.DEBUG
     )
-

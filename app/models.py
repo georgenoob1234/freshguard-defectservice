@@ -1,6 +1,9 @@
 """
-Pydantic models for DefectDetector service.
+Pydantic models for ClassificationService.
 Defines request/response schemas matching Brain's expected format.
+
+NOTE: These schemas are identical to the old DefectDetector service
+to maintain full compatibility with Brain integration.
 """
 
 from typing import List, Optional
