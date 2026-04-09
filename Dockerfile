@@ -16,8 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy only requirements first for better layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# PyTorch CPU-only wheels (default PyPI resolves to CUDA builds on Linux).
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # =============================================================================
@@ -49,14 +50,9 @@ RUN useradd -ms /bin/bash appuser
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application code
-COPY app/ ./app/
-
-# Copy model weights (required at runtime)
-COPY models/ ./models/
-
-# Set ownership to non-root user
-RUN chown -R appuser:appuser /app
+# Application code and weights from this repo (see models/defect_cls.pt or MODEL_PATH)
+COPY --chown=appuser:appuser app/ ./app/
+COPY --chown=appuser:appuser models/ /app/models/
 
 # Switch to non-root user
 USER appuser
@@ -66,7 +62,7 @@ EXPOSE ${SERVICE_PORT}
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${SERVICE_PORT}/health')" || exit 1
+    CMD python -c "import os,urllib.request; p=os.environ.get('SERVICE_PORT','8400'); urllib.request.urlopen('http://127.0.0.1:%s/health' % p, timeout=3)"
 
 # Run the application
 CMD ["sh", "-c", "uvicorn app.main:app --host ${SERVICE_HOST} --port ${SERVICE_PORT}"]
