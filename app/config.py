@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     
     # Classification settings
     DEFECT_MIN_CONF: float = 0.5  # Minimum confidence to report defect
-    DEFECT_CLASS_NAME: str = "defect_apples"  # Class name that indicates defect
+    DEFECT_CLASS_NAME: str = "defect"  # Class name that indicates defect
     
     # Inference settings
     INFERENCE_DEVICE: str = "cpu"  # "cpu", "cuda", or "cuda:0"
